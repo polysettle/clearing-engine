@@ -1,5 +1,4 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use clearing_engine::core::currency::CurrencyCode;
 use clearing_engine::optimization::netting::NettingEngine;
 use clearing_engine::simulation::stress_test::{generate_random_network, NetworkConfig};
 
