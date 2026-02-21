@@ -1,0 +1,12 @@
+{
+  "obligations": [
+    { "from": "BR-TREASURY", "to": "IN-RBI",     "amount": "100000000", "currency": "USD" },
+    { "from": "IN-RBI",      "to": "CN-PBOC",    "amount": "80000000",  "currency": "USD" },
+    { "from": "CN-PBOC",     "to": "RU-CBR",     "amount": "120000000", "currency": "USD" },
+    { "from": "RU-CBR",      "to": "BR-TREASURY", "amount": "90000000",  "currency": "USD" },
+    { "from": "ZA-SARB",     "to": "IN-RBI",     "amount": "40000000",  "currency": "USD" },
+    { "from": "CN-PBOC",     "to": "BR-TREASURY", "amount": "70000000",  "currency": "USD" },
+    { "from": "IN-RBI",      "to": "RU-CBR",     "amount": "30000000",  "currency": "USD" },
+    { "from": "RU-CBR",      "to": "ZA-SARB",    "amount": "25000000",  "currency": "USD" }
+  ]
+}

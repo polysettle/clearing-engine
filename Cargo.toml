@@ -1,0 +1,46 @@
+[package]
+name = "clearing-engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["Polysettle Contributors"]
+description = "Open multi-currency clearing and liquidity optimization engine"
+license = "Apache-2.0"
+repository = "https://github.com/polysettle/clearing-engine"
+documentation = "https://github.com/polysettle/clearing-engine/tree/main/docs"
+keywords = ["settlement", "clearing", "netting", "finance", "cross-border"]
+categories = ["finance", "algorithms", "simulation"]
+readme = "README.md"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+petgraph = "0.6"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+log = "0.4"
+env_logger = "0.10"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+approx = "0.5"
+proptest = "1"
+
+[[bin]]
+name = "clearing-engine"
+path = "src/main.rs"
+
+[[bench]]
+name = "netting_benchmark"
+harness = false
+
+[[example]]
+name = "basic_netting"
+path = "examples/basic_netting.rs"
+
+[[example]]
+name = "trilateral_cycle"
+path = "examples/trilateral_cycle.rs"

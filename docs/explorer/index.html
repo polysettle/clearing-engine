@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clearing Engine Explorer — Polysettle</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; color: #e2e8f0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+  button { cursor: pointer; border: none; outline: none; }
+  button:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const PARTIES = [
+  { id: "BR", label: "Brazil", color: "#10B981", icon: "\u{1F1E7}\u{1F1F7}" },
+  { id: "IN", label: "India", color: "#F59E0B", icon: "\u{1F1EE}\u{1F1F3}" },
+  { id: "CN", label: "China", color: "#EF4444", icon: "\u{1F1E8}\u{1F1F3}" },
+  { id: "RU", label: "Russia", color: "#6366F1", icon: "\u{1F1F7}\u{1F1FA}" },
+  { id: "ZA", label: "S. Africa", color: "#EC4899", icon: "\u{1F1FF}\u{1F1E6}" },
+];
+
+const PRESETS = {
+  perfect_cycle: {
+    name: "Perfect 3-Party Cycle",
+    desc: "All obligations cancel out completely \u2014 100% savings",
+    obligations: [
+      { from: "BR", to: "IN", amount: 100 },
+      { from: "IN", to: "CN", amount: 100 },
+      { from: "CN", to: "BR", amount: 100 },
+    ],
+  },
+  asymmetric: {
+    name: "Asymmetric Cycle",
+    desc: "Different amounts create partial netting with residuals",
+    obligations: [
+      { from: "BR", to: "IN", amount: 100 },
+      { from: "IN", to: "CN", amount: 80 },
+      { from: "CN", to: "BR", amount: 120 },
+    ],
+  },
+  bilateral: {
+    name: "Bilateral Pair",
+    desc: "Two parties owe each other \u2014 net to the difference",
+    obligations: [
+      { from: "BR", to: "IN", amount: 100 },
+      { from: "IN", to: "BR", amount: 65 },
+    ],
+  },
+  complex: {
+    name: "5-Party Network",
+    desc: "Realistic multi-party web of obligations",
+    obligations: [
+      { from: "BR", to: "IN", amount: 100 },
+      { from: "IN", to: "CN", amount: 80 },
+      { from: "CN", to: "RU", amount: 120 },
+      { from: "RU", to: "BR", amount: 90 },
+      { from: "ZA", to: "IN", amount: 40 },
+      { from: "CN", to: "BR", amount: 70 },
+      { from: "IN", to: "RU", amount: 30 },
+      { from: "RU", to: "ZA", amount: 25 },
+    ],
+  },
+  no_cycle: {
+    name: "No Cycles (Linear)",
+    desc: "No circular flows \u2014 netting still reduces but can\u2019t eliminate",
+    obligations: [
+      { from: "BR", to: "IN", amount: 100 },
+      { from: "IN", to: "CN", amount: 80 },
+      { from: "CN", to: "RU", amount: 60 },
+    ],
+  },
+};
+
+function computeNetting(obligations) {
+  const positions = {};
+  let gross = 0;
+  PARTIES.forEach((p) => (positions[p.id] = 0));
+  obligations.forEach((o) => {
+    positions[o.from] = (positions[o.from] || 0) - o.amount;
+    positions[o.to] = (positions[o.to] || 0) + o.amount;
+    gross += o.amount;
+  });
+  const net = Object.values(positions)
+    .filter((v) => v > 0)
+    .reduce((a, b) => a + b, 0);
+  return { positions, gross, net, savings: gross - net };
+}
+
+function findCycles(obligations) {
+  const adj = {};
+  obligations.forEach((o) => {
+    if (!adj[o.from]) adj[o.from] = [];
+    adj[o.from].push({ to: o.to, amount: o.amount });
+  });
+  const cycles = [];
+  const nodes = [...new Set(obligations.flatMap((o) => [o.from, o.to]))].sort();
+
+  function dfs(start, current, path, visited) {
+    const neighbors = adj[current] || [];
+    for (const edge of neighbors) {
+      if (edge.to === start && path.length >= 2) {
+        const cyclePath = [...path];
+        let bottleneck = Infinity;
+        for (let i = 0; i < cyclePath.length; i++) {
+          const from = cyclePath[i];
+          const to = cyclePath[(i + 1) % cyclePath.length];
+          const e = obligations.find((o) => o.from === from && o.to === to);
+          if (e && e.amount < bottleneck) bottleneck = e.amount;
+        }
+        const backEdge = obligations.find(
+          (o) => o.from === cyclePath[cyclePath.length - 1] && o.to === start
+        );
+        if (backEdge && backEdge.amount < bottleneck) bottleneck = backEdge.amount;
+        if (bottleneck > 0 && bottleneck < Infinity) {
+          cycles.push({ parties: cyclePath, bottleneck });
+        }
+      } else if (!visited.has(edge.to) && edge.to > start) {
+        visited.add(edge.to);
+        path.push(edge.to);
+        dfs(start, edge.to, path, visited);
+        path.pop();
+        visited.delete(edge.to);
+      }
+    }
+  }
+
+  for (const node of nodes) {
+    const visited = new Set([node]);
+    dfs(node, node, [node], visited);
+  }
+  return cycles;
+}
+
+function getParty(id) {
+  return PARTIES.find((p) => p.id === id) || { id, label: id, color: "#888", icon: "\u{1F3E6}" };
+}
+
+function getNodePositions(partyIds, cx, cy, radius) {
+  const positions = {};
+  const n = partyIds.length;
+  partyIds.forEach((id, i) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    positions[id] = { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+  });
+  return positions;
+}
+
+function GraphView({ obligations, step, highlightCycles }) {
+  const usedParties = [...new Set(obligations.flatMap((o) => [o.from, o.to]))].sort();
+  const width = 460, height = 380;
+  const cx = width / 2, cy = height / 2;
+  const radius = Math.min(width, height) * 0.34;
+  const pos = getNodePositions(usedParties, cx, cy, radius);
+  const cycles = highlightCycles ? findCycles(obligations) : [];
+  const cycleEdges = new Set();
+  cycles.forEach((c) => {
+    for (let i = 0; i < c.parties.length; i++) {
+      cycleEdges.add(c.parties[i] + "-" + c.parties[(i + 1) % c.parties.length]);
+    }
+  });
+  const netting = computeNetting(obligations);
+
+  return (
+    <svg viewBox={"0 0 " + width + " " + height} style={{ width: "100%", maxWidth: 480, display: "block", margin: "0 auto" }}>
+      <defs>
+        <marker id="arrowGray" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
+        </marker>
+        <marker id="arrowCycle" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+        </marker>
+        <marker id="arrowNet" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+        </marker>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+          <feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+
+      {obligations.map((o, i) => {
+        const from = pos[o.from], to = pos[o.to];
+        if (!from || !to) return null;
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const nx = dx / len, ny = dy / len;
+        const nodeR = 28;
+        const reverse = obligations.find((ob) => ob.from === o.to && ob.to === o.from);
+        const perpX = -ny * (reverse ? 8 : 0);
+        const perpY = nx * (reverse ? 8 : 0);
+        const x1 = from.x + nx * nodeR + perpX;
+        const y1 = from.y + ny * nodeR + perpY;
+        const x2 = to.x - nx * (nodeR + 10) + perpX;
+        const y2 = to.y - ny * (nodeR + 10) + perpY;
+
+        const isCycleEdge = cycleEdges.has(o.from + "-" + o.to);
+        const netAmount = step === 2 ? Math.max(0, o.amount - (cycles[0] ? cycles[0].bottleneck : 0)) : o.amount;
+        const isEliminated = step === 2 && isCycleEdge && netAmount === 0;
+
+        let strokeColor = "#475569", markerEnd = "url(#arrowGray)", strokeWidth = 2, opacity = 1;
+        if (step === 1 && isCycleEdge) {
+          strokeColor = "#fbbf24"; markerEnd = "url(#arrowCycle)"; strokeWidth = 3;
+        } else if (step === 2) {
+          if (isEliminated) { opacity = 0.15; strokeColor = "#64748b"; }
+          else { strokeColor = "#34d399"; markerEnd = "url(#arrowNet)"; strokeWidth = 2.5; }
+        }
+
+        const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+        return (
+          <g key={i} style={{ opacity, transition: "opacity 0.5s" }}>
+            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={strokeColor} strokeWidth={strokeWidth} markerEnd={markerEnd}
+              filter={step === 1 && isCycleEdge ? "url(#glow)" : undefined} style={{ transition: "all 0.4s" }} />
+            <rect x={midX - 20} y={midY - 10} width={40} height={20} rx={4}
+              fill={step === 2 ? (isEliminated ? "#1e293b" : "#064e3b") : step === 1 && isCycleEdge ? "#422006" : "#1e293b"}
+              stroke={strokeColor} strokeWidth={0.5} />
+            <text x={midX} y={midY + 4} textAnchor="middle" fill={isEliminated ? "#475569" : "#e2e8f0"} fontSize={11}
+              fontFamily="JetBrains Mono, monospace"
+              style={{ textDecoration: isEliminated ? "line-through" : "none" }}>
+              {"$" + (step === 2 && isCycleEdge ? netAmount : o.amount) + "M"}
+            </text>
+          </g>
+        );
+      })}
+
+      {usedParties.map((id) => {
+        const p = getParty(id);
+        const { x, y } = pos[id];
+        const netPos = netting.positions[id] || 0;
+        return (
+          <g key={id}>
+            <circle cx={x} cy={y} r={28} fill="#0f172a" stroke={p.color} strokeWidth={2.5} />
+            <text x={x} y={y - 4} textAnchor="middle" fontSize={16}>{p.icon}</text>
+            <text x={x} y={y + 14} textAnchor="middle" fill="#e2e8f0" fontSize={9} fontFamily="JetBrains Mono, monospace" fontWeight="600">{p.label}</text>
+            {step === 2 && (
+              <g>
+                <rect x={x - 22} y={y + 22} width={44} height={18} rx={3}
+                  fill={netPos > 0 ? "#064e3b" : netPos < 0 ? "#7f1d1d" : "#1e293b"}
+                  stroke={netPos > 0 ? "#34d399" : netPos < 0 ? "#f87171" : "#475569"} strokeWidth={0.5} />
+                <text x={x} y={y + 34} textAnchor="middle" fill={netPos > 0 ? "#34d399" : netPos < 0 ? "#f87171" : "#94a3b8"}
+                  fontSize={10} fontFamily="JetBrains Mono, monospace">
+                  {(netPos > 0 ? "+" : "") + netPos}
+                </text>
+              </g>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function Stat({ label, value, color, active }) {
+  return (
+    <div style={{ background: active ? color + "12" : "#0f172a", border: "1px solid " + (active ? color : "#1e293b"),
+      borderRadius: 8, padding: "8px 14px", minWidth: 80, textAlign: "center", transition: "all 0.3s" }}>
+      <div style={{ fontSize: 10, color: "#64748b", fontFamily: "JetBrains Mono, monospace", letterSpacing: 1, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 18, color: color, fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
+function StatsBar({ obligations, step }) {
+  const netting = computeNetting(obligations);
+  const cycles = findCycles(obligations);
+  const pct = netting.gross > 0 ? ((netting.savings / netting.gross) * 100).toFixed(1) : "0.0";
+  return (
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", margin: "16px 0" }}>
+      <Stat label="GROSS" value={"$" + netting.gross + "M"} color="#94a3b8" active={step === 0} />
+      <Stat label="CYCLES" value={cycles.length} color="#fbbf24" active={step === 1} />
+      {cycles.length > 0 && <Stat label="BOTTLENECK" value={"$" + (cycles[0] ? cycles[0].bottleneck : 0) + "M"} color="#fbbf24" active={step === 1} />}
+      <Stat label="NET" value={"$" + netting.net + "M"} color="#34d399" active={step === 2} />
+      <Stat label="SAVED" value={pct + "%"} color="#34d399" active={step === 2} />
+    </div>
+  );
+}
+
+function LedgerTable({ obligations }) {
+  const netting = computeNetting(obligations);
+  const usedParties = [...new Set(obligations.flatMap((o) => [o.from, o.to]))].sort();
+  const th = { padding: "8px 12px", color: "#64748b", borderBottom: "1px solid #1e293b", fontSize: 10, letterSpacing: 1, fontFamily: "JetBrains Mono, monospace" };
+  const td = { padding: "8px 12px", borderBottom: "1px solid #0f172a", fontFamily: "JetBrains Mono, monospace", fontSize: 12 };
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{...th, textAlign: "left"}}>PARTY</th>
+            <th style={{...th, textAlign: "right"}}>OUTFLOWS</th>
+            <th style={{...th, textAlign: "right"}}>INFLOWS</th>
+            <th style={{...th, textAlign: "right"}}>NET</th>
+            <th style={{...th, textAlign: "left"}}>STATUS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {usedParties.map((id) => {
+            const p = getParty(id);
+            const outflows = obligations.filter((o) => o.from === id).reduce((s, o) => s + o.amount, 0);
+            const inflows = obligations.filter((o) => o.to === id).reduce((s, o) => s + o.amount, 0);
+            const net = netting.positions[id] || 0;
+            return (
+              <tr key={id}>
+                <td style={td}><span style={{ marginRight: 6 }}>{p.icon}</span><span style={{ color: p.color }}>{p.label}</span></td>
+                <td style={{...td, textAlign: "right", color: "#f87171"}}>{"-$" + outflows + "M"}</td>
+                <td style={{...td, textAlign: "right", color: "#34d399"}}>{"+$" + inflows + "M"}</td>
+                <td style={{...td, textAlign: "right", color: net > 0 ? "#34d399" : net < 0 ? "#f87171" : "#64748b", fontWeight: 700}}>
+                  {(net > 0 ? "+" : "") + (net === 0 ? "0" : net) + "M"}
+                </td>
+                <td style={td}>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4,
+                    background: net > 0 ? "#064e3b" : net < 0 ? "#7f1d1d" : "#1e293b",
+                    color: net > 0 ? "#34d399" : net < 0 ? "#f87171" : "#64748b" }}>
+                    {net > 0 ? "CREDITOR" : net < 0 ? "DEBTOR" : "FLAT"}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AlgorithmView({ obligations }) {
+  const netting = computeNetting(obligations);
+  const cycles = findCycles(obligations);
+  const usedParties = [...new Set(obligations.flatMap((o) => [o.from, o.to]))].sort();
+  const mono = { fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "#94a3b8", lineHeight: 1.8 };
+  return (
+    <div style={mono}>
+      <div style={{ color: "#64748b", marginBottom: 4 }}>
+        <span style={{ color: "#c084fc" }}>fn</span>{" "}
+        <span style={{ color: "#e2e8f0" }}>multilateral_net</span>(obligations) {"→"} NettingResult {"{"}
+      </div>
+      <div style={{ paddingLeft: 16 }}>
+        <div style={{ color: "#475569" }}>// 1. Build ledger — apply each obligation</div>
+        {obligations.map((o, i) => (
+          <div key={i}>
+            <span style={{ color: "#64748b" }}>ledger[</span>
+            <span style={{ color: getParty(o.from).color }}>{o.from}</span>
+            <span style={{ color: "#64748b" }}>] -= </span>
+            <span style={{ color: "#f87171" }}>{o.amount}</span>
+            <span style={{ color: "#64748b" }}>{";  ledger["}</span>
+            <span style={{ color: getParty(o.to).color }}>{o.to}</span>
+            <span style={{ color: "#64748b" }}>] += </span>
+            <span style={{ color: "#34d399" }}>{o.amount}</span>
+          </div>
+        ))}
+        <div style={{ height: 8 }} />
+        <div style={{ color: "#475569" }}>// 2. Result — each party's net position</div>
+        {usedParties.map((id) => {
+          const net = netting.positions[id] || 0;
+          return (
+            <div key={id}>
+              <span style={{ color: getParty(id).color }}>{id}</span>
+              <span style={{ color: "#64748b" }}>{" → "}</span>
+              <span style={{ color: net > 0 ? "#34d399" : net < 0 ? "#f87171" : "#64748b", fontWeight: 700 }}>
+                {(net > 0 ? "+" : "") + net}
+              </span>
+              <span style={{ color: "#475569" }}>{" " + (net > 0 ? "// receives" : net < 0 ? "// pays" : "// settled")}</span>
+            </div>
+          );
+        })}
+        <div style={{ height: 8 }} />
+        <div style={{ color: "#475569" }}>// 3. Net = sum of positive positions only</div>
+        <div>
+          <span style={{ color: "#64748b" }}>net_total = </span>
+          <span style={{ color: "#34d399", fontWeight: 700 }}>{netting.net}</span>
+          <span style={{ color: "#64748b" }}>{" (was " + netting.gross + " gross → "}</span>
+          <span style={{ color: "#fbbf24" }}>{(netting.gross > 0 ? ((netting.savings / netting.gross) * 100).toFixed(1) : 0) + "% saved"}</span>
+          <span style={{ color: "#64748b" }}>)</span>
+        </div>
+      </div>
+      <div style={{ color: "#64748b" }}>{"}"}</div>
+      {cycles.length > 0 && (
+        <div style={{ marginTop: 16, padding: 12, background: "#1c1917", borderRadius: 8, border: "1px solid #422006" }}>
+          <div style={{ color: "#fbbf24", fontSize: 11, marginBottom: 6 }}>
+            {"\u27F3 CYCLES DETECTED (" + cycles.length + ")"}
+          </div>
+          {cycles.map((c, i) => (
+            <div key={i} style={{ marginBottom: 4 }}>
+              <span style={{ color: "#e2e8f0" }}>
+                {c.parties.map((id) => getParty(id).icon).join(" → ") + " → " + getParty(c.parties[0]).icon}
+              </span>
+              <span style={{ color: "#fbbf24" }}>{" bottleneck=$" + c.bottleneck + "M"}</span>
+              <span style={{ color: "#475569" }}>{" saves=$" + (c.bottleneck * c.parties.length) + "M"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STEP_INFO = [
+  { title: "\u2460 Gross Obligations", desc: "Every arrow is a payment one country owes another. Without netting, each of these flows needs real liquidity \u2014 cash on hand to fund the transfer. The gross total is the sum of every obligation.", color: "#94a3b8" },
+  { title: "\u2461 Cycle Detection", desc: "The engine builds a directed graph and runs DFS to find circular flows (A\u2192B\u2192C\u2192A). The bottleneck is the smallest edge in the cycle \u2014 that's the maximum amount that can circulate without anyone needing to fund it. This is cycle_detection.rs.", color: "#fbbf24" },
+  { title: "\u2462 Multilateral Netting", desc: "Every party's inflows and outflows are summed into a single net position. Positive = net creditor (owed money). Negative = net debtor (owes money). Only the net amounts need actual settlement. This is netting.rs \u2192 multilateral_net().", color: "#34d399" },
+];
+
+function App() {
+  const [preset, setPreset] = useState("asymmetric");
+  const [step, setStep] = useState(0);
+  const [tab, setTab] = useState("graph");
+  const obligations = PRESETS[preset].obligations;
+
+  return (
+    <div style={{ background: "#020617", color: "#e2e8f0", minHeight: "100vh", fontFamily: "'IBM Plex Sans', system-ui, sans-serif", padding: "24px 16px" }}>
+      {/* Header */}
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{ fontSize: 11, letterSpacing: 3, color: "#64748b", fontFamily: "JetBrains Mono, monospace", marginBottom: 4 }}>POLYSETTLE</div>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: -0.5 }}>Clearing Engine Explorer</h1>
+        <p style={{ fontSize: 13, color: "#64748b", margin: "6px 0 0" }}>How multi-currency netting reduces settlement liquidity</p>
+      </div>
+
+      {/* Presets */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 16 }}>
+        {Object.entries(PRESETS).map(([key, val]) => (
+          <button key={key} onClick={() => { setPreset(key); setStep(0); }}
+            style={{ background: preset === key ? "#1e293b" : "transparent", border: "1px solid " + (preset === key ? "#334155" : "#1e293b"),
+              color: preset === key ? "#e2e8f0" : "#64748b", borderRadius: 6, padding: "6px 12px", fontSize: 11,
+              fontFamily: "JetBrains Mono, monospace", transition: "all 0.2s" }}>
+            {val.name}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ textAlign: "center", marginBottom: 16, fontSize: 12, color: "#64748b", fontStyle: "italic" }}>{PRESETS[preset].desc}</div>
+
+      {/* Steps */}
+      <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 16 }}>
+        {STEP_INFO.map((s, i) => (
+          <button key={i} onClick={() => setStep(i)}
+            style={{ background: step === i ? s.color + "18" : "transparent", border: "1px solid " + (step === i ? s.color : "#1e293b"),
+              color: step === i ? s.color : "#475569", borderRadius: 6, padding: "8px 14px", fontSize: 11,
+              fontFamily: "JetBrains Mono, monospace", fontWeight: step === i ? 700 : 400, transition: "all 0.2s" }}>
+            {["\u2460 Gross", "\u2461 Cycles", "\u2462 Netted"][i]}
+          </button>
+        ))}
+      </div>
+
+      {/* Explanation */}
+      <div style={{ background: STEP_INFO[step].color + "08", border: "1px solid " + STEP_INFO[step].color + "30",
+        borderRadius: 8, padding: "12px 16px", marginBottom: 16, maxWidth: 520, margin: "0 auto 16px" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: STEP_INFO[step].color, marginBottom: 4 }}>{STEP_INFO[step].title}</div>
+        <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>{STEP_INFO[step].desc}</div>
+      </div>
+
+      <StatsBar obligations={obligations} step={step} />
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 4, justifyContent: "center", marginBottom: 12 }}>
+        {[{ key: "graph", label: "Graph" }, { key: "ledger", label: "Ledger" }, { key: "algorithm", label: "Algorithm" }].map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            style={{ background: tab === t.key ? "#1e293b" : "transparent", border: "1px solid " + (tab === t.key ? "#334155" : "transparent"),
+              color: tab === t.key ? "#e2e8f0" : "#475569", borderRadius: 6, padding: "6px 16px", fontSize: 11,
+              fontFamily: "JetBrains Mono, monospace", transition: "all 0.2s" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Main panel */}
+      <div style={{ background: "#0f172a", borderRadius: 12, border: "1px solid #1e293b", padding: 16, maxWidth: 540, margin: "0 auto", minHeight: 300 }}>
+        {tab === "graph" && <GraphView obligations={obligations} step={step} highlightCycles={step >= 1} />}
+        {tab === "ledger" && <LedgerTable obligations={obligations} />}
+        {tab === "algorithm" && <AlgorithmView obligations={obligations} />}
+      </div>
+
+      <div style={{ textAlign: "center", marginTop: 24, fontSize: 11, color: "#334155", fontFamily: "JetBrains Mono, monospace" }}>
+        polysettle/clearing-engine — open multi-currency settlement infrastructure
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>
